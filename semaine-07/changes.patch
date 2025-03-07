@@ -1,0 +1,53 @@
+diff --git a/richards.py b/richards.py
+index ee8ef7a..669cdb3 100644
+--- a/richards.py
++++ b/richards.py
+@@ -2,6 +2,8 @@ import numpy as np
+ from scipy.optimize import fsolve
+ import matplotlib.pyplot as plt
+ import fipy as fp
++from petsc4py import PETSc
++
+ PETSc.Options().setValue("snes_type", "newtonls")
+ 
+ def vg_k(u, k_sat, a, n, m, l=0.5):
+@@ -33,24 +35,23 @@ def richards_fem(q, k_sat, a, n, m, l=0.5, Lz=10, nz=100, max_iters=100, toleran
+     # Variables
+     z = fp.CellVariable(name="elevation", mesh=mesh, value=mesh.cellCenters[0])
+     h = fp.CellVariable(name="total head", mesh=mesh, value=0.0, hasOld=True)
+-    u = fp.CellVariable(name="matrix pressure", mesh=mesh, value=h.value-z.value, hasOld=True)    
+-    k = fp.CellVariable(mesh=mesh, value=vg_k(u.value, k_sat, a, n, m, l))
++    u = h - z
++    u.name = "matrix pressure"
++    k = vg_k(u.faceValue, k_sat, a, n, m, l)
+ 
+     # Boundary conditions
+     h.constrain(0.0, mesh.facesLeft) # Dirichlet at bottom
+-    h.faceGrad.constrain(- q/k.faceValue, where=mesh.facesRight)  # Neumann at top
++    h.faceGrad.constrain(q/k, where=mesh.facesRight)  # Neumann at top
+ 
+     # Equation
+-    eq = (fp.DiffusionTerm(coeff=k, var=h) == 0)
++    eq = (fp.TransientTerm(var=h) == fp.DiffusionTerm(coeff=k, var=h))
+ 
+     # Solve with Picard iterations
+     solver = fp.DefaultSolver(tolerance=1e-10, iterations=5000)
+     for iter in range(max_iters):
+-        u.value = h.value - z.value
+-        k.value = vg_k(u.value, k_sat, a, n, m, l)
+-        eq.sweep(var=h, solver=solver)
+-        if np.max(np.abs(h.value - h.old.value)) > tolerance:
+-            break
++        h.updateOld()
++        for sweep in range(3):
++            res = eq.sweep(dt=10000., var=h, solver=solver)
+ 
+     return u.value, z.value
+ 
+@@ -73,11 +74,12 @@ z_kisch = kisch(q=rain, u=u_kisch, u_q=u_q, k_sat=k_sat, a=a, n=n, m=m, l=l, z_b
+ 
+ u_fem, z_fem = richards_fem(
+     q=rain, k_sat=k_sat, a=a, n=n, m=m, l=l,
+-    Lz=10, nz=100, max_iters=1000, tolerance=1e-8
++    Lz=10, nz=1000, max_iters=10000, tolerance=1e-8
+ )
